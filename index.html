@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>body{margin:0;font-size:14px;font-family:system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>工程進度排程</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<style>
+/* Layout: site-office schedule board — summary strip, trades, Gantt, overlap periods with pies, advice, editable job table; trilingual */
+:root{
+  --bg:#f4f5f3; --panel:#ffffff; --ink:#1d2321; --muted:#5f6a66; --line:#d9ddda;
+  --accent:#d27a1f; --accent-soft:#f6e3cc; --bar:#2f5d62; --sub:#b9c7c1; --sel:#eef3f1;
+  --today:#c0392b; --warn:#b85c00; --good:#2e7d4f;
+  --r-fm:#2f5d62; --r-jm:#5f9ea0; --r-ap:#a8cfc4; --r-sf:#d27a1f; --r-en:#6b5b95; --r-lg:#9a8f7a;
+  --f-display:"IBM Plex Sans","Noto Sans TC",system-ui,sans-serif;
+  --f-body:"Noto Sans TC","IBM Plex Sans",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#141817; --panel:#1c2120; --ink:#e7ebe9; --muted:#9aa6a1; --line:#2f3634;
+  --accent:#e89a45; --accent-soft:#3a2a17; --bar:#5fa0a6; --sub:#3c4a45; --sel:#24302d;
+  --today:#ef6b5b; --warn:#f0a050; --good:#6cc08f;
+  --r-fm:#5fa0a6; --r-jm:#3f7a7d; --r-ap:#8fc2b4; --r-sf:#e89a45; --r-en:#9d8cc8; --r-lg:#b5aa93; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#141817; --panel:#1c2120; --ink:#e7ebe9; --muted:#9aa6a1; --line:#2f3634;
+  --accent:#e89a45; --accent-soft:#3a2a17; --bar:#5fa0a6; --sub:#3c4a45; --sel:#24302d;
+  --today:#ef6b5b; --warn:#f0a050; --good:#6cc08f;
+  --r-fm:#5fa0a6; --r-jm:#3f7a7d; --r-ap:#8fc2b4; --r-sf:#e89a45; --r-en:#9d8cc8; --r-lg:#b5aa93; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:20px}
+.topbar{display:flex;justify-content:flex-end}
+.lang{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden;background:var(--panel)}
+.lang button{border:none;border-radius:0;padding:5px 12px;font-size:13px;background:transparent}
+.lang button+button{border-left:1px solid var(--line)}
+.lang button[aria-pressed="true"]{background:var(--bar);color:#fff}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{font-family:var(--f-display);font-weight:600;font-size:26px;margin:0;text-wrap:balance}
+h1 small{display:block;font-size:12px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-bottom:4px;font-family:var(--f-mono)}
+h2{font-family:var(--f-display);font-size:15px;font-weight:600;margin:0}
+h3{font-size:13px;font-weight:500;margin:0;color:var(--muted)}
+.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+label.inline{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center}
+select,input,button{font:inherit;color:var(--ink)}
+select,input{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:5px 7px}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:6px 12px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+button.xl{border-color:var(--good);color:var(--good);font-weight:500}
+button.xl:disabled{opacity:.6;cursor:wait}
+.toast{font-size:12px;color:var(--muted);min-height:1em}
+.topbar{gap:10px;align-items:center;flex-wrap:wrap}
+.sync{margin-right:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.sync .led{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.sync[data-s="ok"] .led{background:var(--good)}
+.sync[data-s="saving"] .led{background:var(--accent)}
+.sync[data-s="err"] .led{background:var(--today)}
+.sync[data-s="err"]{color:var(--today)}
+.sync button{padding:3px 10px;font-size:12px}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.stat{background:var(--panel);padding:12px 14px}
+.stat .k{font-size:12px;color:var(--muted)}
+.stat .v{font-family:var(--f-mono);font-size:22px;font-weight:500;font-variant-numeric:tabular-nums}
+.stat .v.hot{color:var(--accent)}
+.stat .s{font-size:12px;color:var(--muted)}
+section.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.panel-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.hint{font-size:12px;color:var(--muted)}
+.scroll{overflow-x:auto}
+.roles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.role{border:1px solid var(--line);border-radius:5px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.role .t{display:flex;align-items:center;gap:7px;font-weight:500;flex-wrap:wrap}
+.dot{width:10px;height:10px;border-radius:50%;flex:none;display:inline-block}
+.role .d{font-size:12px;color:var(--muted)}
+.role .rule{font-size:12px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.role .rule input{width:56px;font-family:var(--f-mono);padding:2px 5px}
+.tag{font-size:11px;font-family:var(--f-mono);color:var(--muted);border:1px solid var(--line);border-radius:3px;padding:0 5px;width:max-content}
+.gantt{min-width:760px;position:relative}
+.g-row{display:grid;grid-template-columns:200px 1fr;align-items:center;border-top:1px solid var(--line);min-height:38px}
+.g-row.axis{border-top:none;min-height:24px}
+.g-name{font-size:13px;padding-right:10px;line-height:1.3}
+.g-name b{font-weight:500}
+.g-name span{display:block;font-size:11px;color:var(--muted);font-family:var(--f-mono)}
+.g-track{position:relative;height:38px}
+.axis .g-track{height:24px}
+.tick{position:absolute;top:0;bottom:0;border-left:1px dashed var(--line);font-family:var(--f-mono);font-size:11px;color:var(--muted);padding-left:3px;white-space:nowrap}
+.g-bar{position:absolute;top:9px;height:20px;border-radius:3px;background:var(--bar);color:#fff;font-size:11px;font-family:var(--f-mono);display:flex;align-items:center;padding:0 6px;white-space:nowrap;overflow:hidden}
+.g-bar.split{background:linear-gradient(90deg,var(--bar) 0 var(--own),var(--sub) var(--own) 100%)}
+.g-bar.calc{background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(255,255,255,.18) 6px 12px)}
+.g-band{position:absolute;top:0;bottom:0;background:var(--accent-soft);opacity:.55;pointer-events:none}
+.g-today{position:absolute;top:0;bottom:0;border-left:2px solid var(--today);pointer-events:none;z-index:2}
+.g-today span{position:absolute;top:-2px;left:3px;font-size:10px;color:var(--today);background:var(--panel);padding:0 2px;white-space:nowrap}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.ov{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px}
+@media (max-width:820px){.ov{grid-template-columns:1fr}}
+.seglist{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:5px;overflow:hidden;max-height:470px;overflow-y:auto}
+.seg{display:grid;grid-template-columns:126px 1fr 52px;gap:8px;align-items:center;padding:8px 10px;border:none;border-bottom:1px solid var(--line);border-radius:0;background:var(--panel);text-align:left;width:100%}
+.seg:last-child{border-bottom:none}
+.seg[aria-pressed="true"]{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}
+.seg .when{font-family:var(--f-mono);font-size:12px}
+.seg .when small{display:block;color:var(--muted);font-size:11px;font-family:var(--f-body)}
+.seg .jobs{font-size:12px;display:flex;flex-wrap:wrap;gap:4px}
+.seg .jobs span{background:var(--bg);border-radius:3px;padding:0 5px}
+.seg .n{font-family:var(--f-mono);font-size:16px;text-align:right;font-variant-numeric:tabular-nums}
+.seg .n.peak{color:var(--accent);font-weight:500}
+.seg .n small{display:block;font-size:10px;color:var(--muted)}
+.pies{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px}
+.pie{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.pie svg{width:180px;height:180px;max-width:100%}
+.pie ul{list-style:none;margin:0;padding:0;font-size:12px;display:flex;flex-direction:column;gap:3px;width:100%}
+.pie li{display:grid;grid-template-columns:12px 1fr auto;gap:7px;align-items:center}
+.pie li b{font-family:var(--f-mono);font-weight:500;font-variant-numeric:tabular-nums}
+.short{font-size:12px;padding:6px 10px;border-radius:4px;background:var(--accent-soft);color:var(--warn)}
+.advice{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.advice li{display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:baseline;font-size:13px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.advice li:last-child{border-bottom:none}
+.kind{font-size:11px;border-radius:10px;padding:1px 8px;text-align:center;background:var(--sel);color:var(--ink);white-space:nowrap}
+.kind.move{background:var(--bar);color:#fff}
+.kind.peak{background:var(--accent);color:#fff}
+.kind.ratio{background:var(--accent-soft);color:var(--warn)}
+table{border-collapse:collapse;width:100%;min-width:1120px;font-size:13px}
+th{font-weight:500;color:var(--muted);text-align:left;font-size:12px;padding:6px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+td input{width:100%}
+td input[type=number]{width:58px;font-family:var(--f-mono)}
+td input[type=date]{font-family:var(--f-mono);min-width:132px}
+td.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+td.flag{font-size:12px;color:var(--warn);min-width:160px}
+.pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.pill.run{background:var(--bar);border-color:var(--bar);color:#fff}
+button.del{border:none;background:none;color:var(--muted);padding:4px 8px}
+button.del:hover{color:var(--today)}
+.foot{font-size:12px;color:var(--muted);max-width:80ch}
+@media (prefers-reduced-motion:no-preference){.g-bar{transition:left .2s,width .2s}}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="sync" id="sync" data-s="local"><span class="led"></span><span id="syncText"></span><button id="signin" hidden></button><button id="signout" hidden></button></div>
+    <div class="lang" role="group" aria-label="Language">
+      <button data-lang="zh" lang="zh-Hant">中文</button><button data-lang="en" lang="en">English</button><button data-lang="es" lang="es">Español</button>
+    </div>
+  </div>
+  <header>
+    <h1><small data-t="eyebrow"></small><span data-t="title"></span></h1>
+    <div class="controls">
+      <label class="inline" for="wk"><span data-t="wkLabel"></span>
+        <select id="wk"><option value="5" data-t="wk5"></option><option value="6" data-t="wk6"></option><option value="7" data-t="wk7"></option></select>
+      </label>
+      <label class="inline" for="bench"><span data-t="bench"></span> <input id="bench" type="number" min="0" placeholder="—" style="width:70px"></label>
+      <button id="add" class="primary" data-t="add"></button>
+      <button id="xlsx" class="xl" data-t="export" hidden></button>
+      <button id="reset" data-t="reset"></button>
+    </div>
+  </header>
+  <div class="toast" id="toast" role="status"></div>
+
+  <div class="summary" id="summary"></div>
+
+  <section class="panel">
+    <div class="panel-head"><h2 data-t="rolesH"></h2><span class="hint" data-t="rolesHint"></span></div>
+    <div class="roles" id="roles"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2 data-t="ganttH"></h2>
+      <div class="legend"><span><i style="background:var(--bar)"></i><span data-t="lgOwn"></span></span><span><i style="background:var(--sub)"></i><span data-t="lgSub"></span></span><span><i style="background:var(--accent-soft)"></i><span data-t="lgSel"></span></span></div>
+    </div>
+    <div class="scroll"><div class="gantt" id="gantt"></div></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2 data-t="ovH"></h2><span class="hint" data-t="ovHint"></span></div>
+    <div class="ov">
+      <div class="seglist" id="segs"></div>
+      <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+        <div id="segTitle"></div>
+        <div class="pies" id="pies"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2 data-t="advH"></h2><span class="hint" data-t="advHint"></span></div>
+    <ul class="advice" id="advice"></ul>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2 data-t="tblH"></h2><span class="hint" data-t="tblHint"></span></div>
+    <div class="scroll"><table>
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+  </section>
+
+  <p class="foot" data-t="foot"></p>
+</div>
+
+<script>
+const I18N={
+zh:{
+  html:"zh-Hant",eyebrow:"Project Schedule · Manpower",title:"工程進度排程",
+  wkLabel:"工作日",wk5:"週一至週五",wk6:"週一至週六",wk7:"每天",bench:"公司現有人力",add:"＋ 新增案子",reset:"還原範例",export:"匯出 Excel",
+  nowOnSite:"目前在場（含共用）",nActive:n=>`${n} 個案子施工中`,noneToday:"今天無案子",peakTotal:"尖峰總人力",peakGap:"尖峰缺口",peakField:"尖峰現場班組",
+  benchHave:n=>`現有 ${n} 人`,fieldDesc:"領班 + 技工 + 學徒",totalMD:"現場總人天",nRows:n=>`${n} 個案子 / 分區`,allDone:"全部完工",daysAway:n=>`${n} 天後`,
+  rolesH:"工種與配置規則",rolesHint:"現場班組按案子填；安全、工程師、後勤是共用人力，依同時在場的規模自動算。",perJob:"按案子在清單中填寫",
+  roles:{fm:["領班","帶班、派工、日報，每個案子至少 1 位"],jm:["技工","持證技術工，主要產能"],ap:["學徒","跟技工作業，人數不宜多於技工"],sf:["安全員","巡場、JHA、工安訓練"],en:["工程師","圖面、送審、協調、進度"],lg:["後勤","叫料、倉儲、運輸、工具"]},
+  showTag:true,rulePre:"每",ruleField:"位現場工人配 1 名",ruleJobs:"個同時進行的案子配 1 名",
+  ganttH:"甘特圖",lgOwn:"自有人力",lgSub:"分包比例",lgSel:"選取的重疊時段",today:"今天",dU:"天",letters:["F","J","A"],subDef:"分包",ganttEmpty:"新增案子後顯示甘特圖。",
+  months:["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"],
+  ovH:"重疊時段與人力組成",ovHint:"點選左側時段，右側圓餅圖顯示該時段的人力組成。",segDays:n=>`${n} 天`,overlapN:k=>`${k} 案重疊`,single:"單一案子",ppl:"人",noSeg:"尚無時段",
+  shortage:(t,g)=>`這段需要 ${t} 人，比現有多 ${g} 人，需要招募或外派支援。`,byRole:"依工種",byJob:"依案子",shared:"共用（安全/工程/後勤）",sep:"、",
+  advH:"人力調度建議",advHint:"依上方日期與班組自動產生",advNone:"目前沒有建議。",kinds:{move:"人員轉場",share:"共用 / 調度",peak:"尖峰",ratio:"配比檢查"},
+  aMove:(A,end,n,B,start,gap,extra)=>`<b>${A}</b> ${end} 完工後，班組 ${n} 人（含領班）可直接轉到 <b>${B}</b>（${start} 開工${gap}）。${extra}`,
+  gapIdle:n=>`，中間空 ${n} 天`,gapEarly:n=>`，需提前 ${n} 天交接`,extra:n=>`另需補 ${n} 人。`,
+  aSame:(P,x,y)=>`<b>${P}</b> 的 ${x} 與 ${y} 同時施工，可設 1 位總領班統籌兩區、各留 1 位領班；工具、材料與安全員共用，省下重複的後勤。`,
+  aPeak:(a,b,k,tot,f,s,e,l,L)=>`尖峰在 ${a}–${b}，${k} 案重疊，共 ${tot} 人（現場 ${f}、安全 ${s}、工程師 ${e}、後勤 ${l}）。建議提前 2–3 週確認人力；工期最長的 ${L} 可考慮前段少派人、尖峰過後再加人，把尖峰削平。`,
+  aBuffer:(X,n,sub,p)=>`<b>${X}</b> 工期 ${n} 個工作天、${sub?sub+" 承包 "+p+"%":"跨越多個案子"}，可當人力緩衝：其他案子缺人時從這裡暫調，空檔時把人放回來。`,
+  aAp:(X,ap,jm)=>`<b>${X}</b> 學徒 ${ap} 人多於技工 ${jm} 人，一般建議學徒不超過技工人數。`,aNoFm:X=>`<b>${X}</b> 沒有安排領班。`,
+  aIdle:(d,g)=>`${d} 起約 ${g} 天沒有案子，可安排訓練、休假或爭取新案。`,
+  tblH:"案子清單",tblHint:"填「開始＋結束」算工期與人天；或填「開始＋總人天」，系統推算結束日。",
+  th:["案子","項目","開始","結束","領班","技工","學徒","小計","總人天","分包 %","分包商","工作天","狀態","備註"],
+  calc:"推算",st:{pre:"未開工",run:"施工中",done:"已完工"},left:n=>`剩${n}天`,del:"刪除",newJob:"新案子",
+  fNoStart:"無開始日",fNoEnd:"缺結束日或人天",fEndBefore:"結束早於開始",fShort:n=>`人力不足：需 ${n} 人`,fNoFm:"沒有領班",fApOver:"學徒多於技工",
+  notes:{noStart:"未提供開始日，以今天起算",p3a:"原寫 01/15/2026，依結束日判斷為 2027"},
+  signIn:"用 Google 登入",signOut:"登出",syncLocal:"資料只存在這台電腦（共用功能尚未設定）",syncLogin:"登入後即可和團隊共用同一份排程",syncLoading:"讀取中…",syncSaving:"儲存中…",
+  syncOk:(t,w)=>`已同步 · 最後更新 ${t}${w?"，"+w:""}`,syncDenied:e=>`${e} 沒有編輯權限，請聯絡管理員加入名單`,syncErr:"連線失敗，修改會在恢復連線後送出",
+  foot:"日曆天含頭尾；工作天依「工作日」設定計算，未扣國定假日。分包案的班組視為我方自有人力，分包比例另列。共用人力比例為預設假設，請依公司規定與業主安全要求調整。登入後所有人共用同一份資料；也可隨時匯出 Excel 留存。",
+  xSaving:"正在產生 Excel…",xSaved:"Excel 已匯出。",xDeclined:"已取消下載。",xFail:"這個畫面無法下載檔案。",xBusy:"已有一個下載視窗開著，請先處理。",
+  file:"工程進度排程",
+  sh:{jobs:"案子清單",ov:"重疊時段",log:"每週出工記錄",adv:"調度建議",set:"設定"},
+  xJobs:["案子","項目","開始","結束","領班","技工","學徒","小計","日曆天","工作天","總人天","分包 %","分包商","狀態","備註"],
+  xOv:["開始","結束","天數","同時施工的案子","領班","技工","學徒","安全員","工程師","後勤","合計"],
+  xLog:["週一日期","案子","計畫 領班","計畫 技工","計畫 學徒","計畫 合計","實際 領班","實際 技工","實際 學徒","實際 合計","差異","備註"],
+  xAdv:["類型","建議"],xSet:["項目","數值"],
+  xSetRows:(wk,sf,en,lg,b,d)=>[["工作日",wk],["安全員：每幾位現場工人配 1 名",sf],["工程師：每幾個案子配 1 名",en],["後勤：每幾位現場工人配 1 名",lg],["公司現有人力",b],["匯出日期",d]]
+},
+en:{
+  html:"en",eyebrow:"Manpower Planning",title:"Project Schedule",
+  wkLabel:"Workdays",wk5:"Mon–Fri",wk6:"Mon–Sat",wk7:"Every day",bench:"Staff on hand",add:"+ Add job",reset:"Restore sample",export:"Export Excel",
+  nowOnSite:"On site now (incl. shared)",nActive:n=>`${n} jobs in progress`,noneToday:"No jobs today",peakTotal:"Peak manpower",peakGap:"Peak shortfall",peakField:"Peak field crew",
+  benchHave:n=>`${n} on staff`,fieldDesc:"Foreman + Journeyman + Apprentice",totalMD:"Field man-days",nRows:n=>`${n} jobs / scopes`,allDone:"All complete",daysAway:n=>`in ${n} days`,
+  rolesH:"Trades and staffing rules",rolesHint:"Field crews are entered per job. Safety, engineers and logistics are shared and sized from how many people are on site at once.",perJob:"Entered per job in the job list",
+  roles:{fm:["Foreman","Runs the crew, assigns work, daily reports. At least 1 per job."],jm:["Journeyman","Licensed tradesperson; the main productive crew."],ap:["Apprentice","Works under journeymen; should not outnumber them."],sf:["Safety","Site walks, JHAs, safety training."],en:["Engineer","Drawings, submittals, coordination, schedule."],lg:["Logistics","Material orders, storage, delivery, tools."]},
+  showTag:false,rulePre:"1 per",ruleField:"field workers",ruleJobs:"active jobs",
+  ganttH:"Gantt chart",lgOwn:"Own crew",lgSub:"Subcontracted share",lgSel:"Selected overlap period",today:"Today",dU:"d",letters:["F","J","A"],subDef:"Sub",ganttEmpty:"Add a job to see the Gantt chart.",
+  months:["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"],
+  ovH:"Overlap periods and crew mix",ovHint:"Pick a period on the left to see its crew mix in the pie charts.",segDays:n=>`${n} days`,overlapN:k=>`${k} jobs overlap`,single:"Single job",ppl:"ppl",noSeg:"No periods yet",
+  shortage:(t,g)=>`This period needs ${t} people, ${g} more than you have. Hire or bring in support.`,byRole:"By trade",byJob:"By job",shared:"Shared (safety/eng./logistics)",sep:", ",
+  advH:"Manpower recommendations",advHint:"Generated from the dates and crews above",advNone:"No recommendations right now.",kinds:{move:"Crew move",share:"Share / shift",peak:"Peak",ratio:"Ratio check"},
+  aMove:(A,end,n,B,start,gap,extra)=>`After <b>${A}</b> finishes on ${end}, its crew of ${n} (incl. foreman) can move straight to <b>${B}</b> (starts ${start}${gap}). ${extra}`,
+  gapIdle:n=>`; ${n} idle days in between`,gapEarly:n=>`; needs ${n} days of overlap for handover`,extra:n=>`Add ${n} more.`,
+  aSame:(P,x,y)=>`<b>${P}</b> scopes ${x} and ${y} run at the same time. Put one general foreman over both areas, keep one foreman per area, and share tools, materials and the safety officer to avoid duplicate logistics.`,
+  aPeak:(a,b,k,tot,f,s,e,l,L)=>`Peak is ${a}–${b}: ${k} jobs overlap, ${tot} people (field ${f}, safety ${s}, engineers ${e}, logistics ${l}). Confirm manpower 2–3 weeks ahead. The longest job, ${L}, could run a lighter crew early and add people after the peak to flatten it.`,
+  aBuffer:(X,n,sub,p)=>`<b>${X}</b> runs ${n} workdays${sub?` with ${sub} subcontracting ${p}%`:" across several other jobs"}. Use it as a manpower buffer: borrow people from it when another job is short, and send them back when things ease.`,
+  aAp:(X,ap,jm)=>`<b>${X}</b> has ${ap} apprentices but only ${jm} journeymen. Apprentices usually should not outnumber journeymen.`,aNoFm:X=>`<b>${X}</b> has no foreman assigned.`,
+  aIdle:(d,g)=>`No work for about ${g} days from ${d}. Use it for training, time off, or bidding new jobs.`,
+  tblH:"Job list",tblHint:"Enter start + end to get duration and man-days, or start + total man-days to have the end date calculated.",
+  th:["Job","Scope","Start","End","Foreman","Journeyman","Apprentice","Crew","Man-days","Sub %","Subcontractor","Workdays","Status","Notes"],
+  calc:"Calc.",st:{pre:"Not started",run:"In progress",done:"Complete"},left:n=>`${n} left`,del:"Delete",newJob:"New job",
+  fNoStart:"No start date",fNoEnd:"Needs end date or man-days",fEndBefore:"End is before start",fShort:n=>`Understaffed: needs ${n}`,fNoFm:"No foreman",fApOver:"More apprentices than journeymen",
+  notes:{noStart:"No start date given; counted from today",p3a:"Originally 01/15/2026; set to 2027 to match the end date"},
+  signIn:"Sign in with Google",signOut:"Sign out",syncLocal:"Saved on this computer only (sharing not set up yet)",syncLogin:"Sign in to share one schedule with your team",syncLoading:"Loading…",syncSaving:"Saving…",
+  syncOk:(t,w)=>`Synced · last update ${t}${w?" by "+w:""}`,syncDenied:e=>`${e} does not have edit access. Ask the admin to add you.`,syncErr:"Connection lost. Changes will be sent when you are back online.",
+  foot:"Calendar days include both ends. Workdays follow the Workdays setting and do not exclude holidays. Crews on subcontracted jobs count as our own people; the subcontracted share is shown separately. Shared staffing ratios are starting assumptions; adjust them to company policy and owner safety requirements. After signing in, everyone shares the same data. You can also export to Excel at any time.",
+  xSaving:"Building Excel file…",xSaved:"Excel file exported.",xDeclined:"Download canceled.",xFail:"Downloads are not available in this view.",xBusy:"A download prompt is already open.",
+  file:"Project Schedule",
+  sh:{jobs:"Jobs",ov:"Overlap periods",log:"Weekly crew log",adv:"Recommendations",set:"Settings"},
+  xJobs:["Job","Scope","Start","End","Foreman","Journeyman","Apprentice","Crew","Calendar days","Workdays","Man-days","Sub %","Subcontractor","Status","Notes"],
+  xOv:["Start","End","Days","Jobs running","Foreman","Journeyman","Apprentice","Safety","Engineer","Logistics","Total"],
+  xLog:["Week of (Mon)","Job","Plan Foreman","Plan Journeyman","Plan Apprentice","Plan Total","Actual Foreman","Actual Journeyman","Actual Apprentice","Actual Total","Variance","Notes"],
+  xAdv:["Type","Recommendation"],xSet:["Setting","Value"],
+  xSetRows:(wk,sf,en,lg,b,d)=>[["Workdays",wk],["Safety: 1 per N field workers",sf],["Engineer: 1 per N active jobs",en],["Logistics: 1 per N field workers",lg],["Staff on hand",b],["Exported on",d]]
+},
+es:{
+  html:"es",eyebrow:"Planificación de personal",title:"Programa de Obra",
+  wkLabel:"Días hábiles",wk5:"Lun–Vie",wk6:"Lun–Sáb",wk7:"Todos los días",bench:"Personal disponible",add:"+ Agregar obra",reset:"Restaurar ejemplo",export:"Exportar Excel",
+  nowOnSite:"En obra ahora (con compartido)",nActive:n=>`${n} obras en curso`,noneToday:"Sin obras hoy",peakTotal:"Personal en el pico",peakGap:"Faltante en el pico",peakField:"Cuadrilla en el pico",
+  benchHave:n=>`${n} en plantilla`,fieldDesc:"Capataz + Oficial + Aprendiz",totalMD:"Días-hombre de campo",nRows:n=>`${n} obras / alcances`,allDone:"Fin de todo",daysAway:n=>`en ${n} días`,
+  rolesH:"Oficios y reglas de personal",rolesHint:"Las cuadrillas se ingresan por obra. Seguridad, ingenieros y logística son compartidos y se calculan según el personal en obra al mismo tiempo.",perJob:"Se ingresa por obra en la lista",
+  roles:{fm:["Capataz","Dirige la cuadrilla, asigna tareas y hace el reporte diario. Mínimo 1 por obra."],jm:["Oficial","Oficial certificado; la mano de obra principal."],ap:["Aprendiz","Trabaja con los oficiales; no deben ser más que ellos."],sf:["Seguridad","Recorridos, JHA y capacitación de seguridad."],en:["Ingeniero","Planos, submittals, coordinación y programa."],lg:["Logística","Pedidos de material, almacén, transporte y herramientas."]},
+  showTag:true,rulePre:"1 por cada",ruleField:"trabajadores de campo",ruleJobs:"obras activas",
+  ganttH:"Diagrama de Gantt",lgOwn:"Personal propio",lgSub:"Parte subcontratada",lgSel:"Periodo seleccionado",today:"Hoy",dU:"d",letters:["C","O","A"],subDef:"Sub",ganttEmpty:"Agregue una obra para ver el diagrama.",
+  months:["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"],
+  ovH:"Traslapes y composición del personal",ovHint:"Elija un periodo a la izquierda para ver su composición en los gráficos.",segDays:n=>`${n} días`,overlapN:k=>`${k} obras se traslapan`,single:"Una sola obra",ppl:"pers.",noSeg:"Sin periodos",
+  shortage:(t,g)=>`Este periodo requiere ${t} personas, ${g} más de las disponibles. Contrate o pida apoyo.`,byRole:"Por oficio",byJob:"Por obra",shared:"Compartido (seg./ing./logística)",sep:", ",
+  advH:"Recomendaciones de personal",advHint:"Generadas a partir de las fechas y cuadrillas",advNone:"No hay recomendaciones por ahora.",kinds:{move:"Traslado",share:"Compartir",peak:"Pico",ratio:"Proporción"},
+  aMove:(A,end,n,B,start,gap,extra)=>`Cuando <b>${A}</b> termine el ${end}, su cuadrilla de ${n} (con capataz) puede pasar directo a <b>${B}</b> (inicia ${start}${gap}). ${extra}`,
+  gapIdle:n=>`; ${n} días sin trabajo entre medio`,gapEarly:n=>`; requiere ${n} días de traslape para la entrega`,extra:n=>`Faltan ${n} personas más.`,
+  aSame:(P,x,y)=>`En <b>${P}</b>, los alcances ${x} y ${y} se ejecutan al mismo tiempo. Asigne un capataz general para ambas áreas, mantenga un capataz por área y comparta herramientas, materiales y el encargado de seguridad para no duplicar logística.`,
+  aPeak:(a,b,k,tot,f,s,e,l,L)=>`El pico es ${a}–${b}: ${k} obras se traslapan, ${tot} personas (campo ${f}, seguridad ${s}, ingenieros ${e}, logística ${l}). Confirme el personal con 2–3 semanas de anticipación. La obra más larga, ${L}, puede empezar con menos gente y sumar personal después del pico para aplanarlo.`,
+  aBuffer:(X,n,sub,p)=>`<b>${X}</b> dura ${n} días hábiles${sub?`, con ${sub} subcontratado al ${p}%`:" y abarca varias obras"}. Úsela como reserva de personal: tome gente de ahí cuando otra obra lo necesite y devuélvala cuando baje la carga.`,
+  aAp:(X,ap,jm)=>`<b>${X}</b> tiene ${ap} aprendices y solo ${jm} oficiales. Normalmente los aprendices no deben superar a los oficiales.`,aNoFm:X=>`<b>${X}</b> no tiene capataz asignado.`,
+  aIdle:(d,g)=>`Sin obras por unos ${g} días desde el ${d}. Aproveche para capacitación, vacaciones o cotizar obras nuevas.`,
+  tblH:"Lista de obras",tblHint:"Ingrese inicio + fin para obtener duración y días-hombre, o inicio + días-hombre totales para calcular la fecha de fin.",
+  th:["Obra","Alcance","Inicio","Fin","Capataz","Oficial","Aprendiz","Total","Días-hombre","Sub %","Subcontratista","Días hábiles","Estado","Notas"],
+  calc:"Calc.",st:{pre:"Sin iniciar",run:"En curso",done:"Terminada"},left:n=>`quedan ${n}`,del:"Eliminar",newJob:"Obra nueva",
+  fNoStart:"Sin fecha de inicio",fNoEnd:"Falta fecha de fin o días-hombre",fEndBefore:"El fin es antes del inicio",fShort:n=>`Falta personal: se necesitan ${n}`,fNoFm:"Sin capataz",fApOver:"Más aprendices que oficiales",
+  notes:{noStart:"Sin fecha de inicio; se cuenta desde hoy",p3a:"Decía 01/15/2026; se ajustó a 2027 según la fecha de fin"},
+  signIn:"Entrar con Google",signOut:"Salir",syncLocal:"Guardado solo en esta computadora (aún no se configuró el uso compartido)",syncLogin:"Inicie sesión para compartir un mismo programa con el equipo",syncLoading:"Cargando…",syncSaving:"Guardando…",
+  syncOk:(t,w)=>`Sincronizado · última actualización ${t}${w?" por "+w:""}`,syncDenied:e=>`${e} no tiene permiso para editar. Pida al administrador que lo agregue.`,syncErr:"Sin conexión. Los cambios se enviarán al reconectar.",
+  foot:"Los días calendario incluyen el primero y el último. Los días hábiles siguen la configuración de arriba y no descuentan feriados. Las cuadrillas en obras subcontratadas cuentan como personal propio; la parte subcontratada se muestra aparte. Las proporciones de personal compartido son supuestos iniciales; ajústelas a la política de la empresa y a los requisitos de seguridad del cliente. Al iniciar sesión, todos comparten los mismos datos. También puede exportar a Excel en cualquier momento.",
+  xSaving:"Generando Excel…",xSaved:"Excel exportado.",xDeclined:"Descarga cancelada.",xFail:"Las descargas no están disponibles en esta vista.",xBusy:"Ya hay una ventana de descarga abierta.",
+  file:"Programa de Obra",
+  sh:{jobs:"Obras",ov:"Traslapes",log:"Registro semanal",adv:"Recomendaciones",set:"Configuración"},
+  xJobs:["Obra","Alcance","Inicio","Fin","Capataz","Oficial","Aprendiz","Total","Días calendario","Días hábiles","Días-hombre","Sub %","Subcontratista","Estado","Notas"],
+  xOv:["Inicio","Fin","Días","Obras en curso","Capataz","Oficial","Aprendiz","Seguridad","Ingeniero","Logística","Total"],
+  xLog:["Semana (lunes)","Obra","Plan Capataz","Plan Oficial","Plan Aprendiz","Plan Total","Real Capataz","Real Oficial","Real Aprendiz","Real Total","Diferencia","Notas"],
+  xAdv:["Tipo","Recomendación"],xSet:["Concepto","Valor"],
+  xSetRows:(wk,sf,en,lg,b,d)=>[["Días hábiles",wk],["Seguridad: 1 por cada N trabajadores",sf],["Ingeniero: 1 por cada N obras",en],["Logística: 1 por cada N trabajadores",lg],["Personal disponible",b],["Exportado el",d]]
+}};
+
+const pad=n=>String(n).padStart(2,"0");
+const NOW=new Date(), TODAY=`${NOW.getFullYear()}-${pad(NOW.getMonth()+1)}-${pad(NOW.getDate())}`;
+const ROLES=[
+  {k:"fm",en:"Foreman",c:"--r-fm",field:true},{k:"jm",en:"Journeyman",c:"--r-jm",field:true},{k:"ap",en:"Apprentice",c:"--r-ap",field:true},
+  {k:"sf",en:"Safety",c:"--r-sf",unit:"ruleField",def:20},{k:"en",en:"Engineer",c:"--r-en",unit:"ruleJobs",def:3},{k:"lg",en:"Logistics",c:"--r-lg",unit:"ruleField",def:25}
+];
+const SAMPLE=[
+  {proj:"GMS Tray",scope:"",start:"",end:"2026-11-15",fm:1,jm:3,ap:2,md:"",sub:0,subName:"",note:"",noteKey:"noStart"},
+  {proj:"LB2",scope:"Lighting",start:"2026-10-30",end:"2026-12-15",fm:1,jm:2,ap:1,md:"",sub:0,subName:"",note:""},
+  {proj:"VMB",scope:"",start:"2026-11-15",end:"2027-01-15",fm:1,jm:5,ap:3,md:"",sub:0,subName:"",note:""},
+  {proj:"AMHS",scope:"UIS",start:"2026-11-30",end:"2027-01-15",fm:1,jm:4,ap:3,md:"",sub:0,subName:"",note:""},
+  {proj:"AMHS",scope:"PRS",start:"2026-11-30",end:"2027-01-15",fm:1,jm:3,ap:2,md:"",sub:0,subName:"",note:""},
+  {proj:"P3A",scope:"GMS Tray",start:"2027-01-15",end:"2027-03-30",fm:1,jm:4,ap:2,md:"",sub:0,subName:"",note:"",noteKey:"p3a"},
+  {proj:"Tubing",scope:"",start:"2026-10-30",end:"2027-06-01",fm:1,jm:2,ap:1,md:"",sub:70,subName:"Emvy",note:""}
+];
+const KEY="eng-schedule-v3";
+let state;
+try{state=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+if(!state||!Array.isArray(state.rows)){
+  let old=null; try{old=JSON.parse(localStorage.getItem("eng-schedule-v2"))}catch(e){}
+  if(old&&Array.isArray(old.rows)){
+    old.rows.forEach(r=>{if(r.note==="未提供開始日，以今天起算"){r.note="";r.noteKey="noStart"} if(r.note&&r.note.startsWith("原寫 01/15/2026")){r.note="";r.noteKey="p3a"}});
+    state=old;
+  } else state={wk:5,bench:"",ratio:{sf:20,en:3,lg:25},rows:structuredClone(SAMPLE)};
+}
+const hashLang=(location.hash||"").slice(1);
+if(I18N[hashLang]) state.lang=hashLang;
+if(!I18N[state.lang]) state.lang="zh";
+let L=I18N[state.lang], selSeg=null;
+let remote=null;
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){} if(remote) remote.push()};
+
+const D=s=>{if(!s)return null;const[y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d)};
+const fmt=d=>d?`${d.getMonth()+1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`:"—";
+const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x};
+const isWork=(d,wk)=>{const g=d.getDay();return wk===7||(wk===6?g!==0:g!==0&&g!==6)};
+const dayDiff=(a,b)=>Math.round((b-a)/864e5);
+function workdays(a,b,wk){let n=0;for(let d=new Date(a);d<=b;d=addDays(d,1))if(isWork(d,wk))n++;return n}
+function endFromWork(a,n,wk){let d=new Date(a),c=0;for(let i=0;i<4000;i++){if(isWork(d,wk)){c++;if(c>=n)return d}d=addDays(d,1)}return d}
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const nm=r=>r.proj+(r.scope?" "+r.scope:"");
+const cv=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const roleName=k=>L.roles[k][0];
+const noteOf=r=>r.noteKey?L.notes[r.noteKey]:r.note;
+
+function compute(r){
+  const wk=+state.wk,out={...r,flags:[]};
+  out.crew=(+r.fm||0)+(+r.jm||0)+(+r.ap||0);
+  out.s=D(r.start)||D(TODAY); if(!r.start) out.flags.push(L.fNoStart);
+  const md=+r.md||0;
+  if(r.end) out.e=D(r.end); else if(md&&out.crew){out.e=endFromWork(out.s,Math.ceil(md/out.crew),wk);out.calc=true}
+  if(!out.e){out.flags.push(L.fNoEnd);return out}
+  if(out.e<out.s){out.flags.push(L.fEndBefore);return out}
+  out.cal=dayDiff(out.s,out.e)+1;
+  out.work=workdays(out.s,out.e,wk);
+  out.mandays=md&&!r.end?md:out.work*out.crew;
+  if(md&&r.end&&md>out.work*out.crew) out.flags.push(L.fShort(Math.ceil(md/out.work)));
+  if(!(+r.fm)) out.flags.push(L.fNoFm);
+  if((+r.ap||0)>(+r.jm||0)) out.flags.push(L.fApOver);
+  const t=D(TODAY); out.status=t<out.s?"pre":t>out.e?"done":"run";
+  if(out.status==="run") out.left=workdays(t,out.e,wk);
+  out.ok=true; return out;
+}
+function shared(field,jobs){
+  const R=state.ratio; if(!field) return {sf:0,en:0,lg:0};
+  return {sf:Math.max(1,Math.ceil(field/(+R.sf||20))),en:Math.max(1,Math.ceil(jobs/(+R.en||3))),lg:Math.max(1,Math.ceil(field/(+R.lg||25)))};
+}
+function segments(ok){
+  const pts=new Set(); ok.forEach(r=>{pts.add(+r.s);pts.add(+addDays(r.e,1))});
+  const p=[...pts].sort((a,b)=>a-b), out=[];
+  for(let i=0;i<p.length-1;i++){
+    const a=new Date(p[i]),b=addDays(new Date(p[i+1]),-1);
+    const act=ok.filter(r=>r.s<=a&&r.e>=b); if(!act.length) continue;
+    const c={fm:0,jm:0,ap:0}; act.forEach(r=>{c.fm+=+r.fm||0;c.jm+=+r.jm||0;c.ap+=+r.ap||0});
+    const field=c.fm+c.jm+c.ap, sh=shared(field,act.length);
+    out.push({a,b,act,...c,...sh,field,total:field+sh.sf+sh.en+sh.lg});
+  }
+  return out;
+}
+function model(){
+  const rows=state.rows.map(compute), ok=rows.filter(r=>r.ok), segs=segments(ok);
+  const peak=segs.reduce((m,x)=>!m||x.total>m.total?x:m,null);
+  return {rows,ok,segs,peak,advice:buildAdvice(ok,segs,peak)};
+}
+
+function applyStatic(){
+  document.documentElement.lang=L.html;
+  document.querySelectorAll("[data-t]").forEach(el=>{el.textContent=L[el.dataset.t]});
+  document.querySelectorAll(".lang button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.lang===state.lang));
+  document.getElementById("thead").innerHTML=L.th.map((h,i)=>`<th${i>=4&&i<=6?` title="${["Foreman","Journeyman","Apprentice"][i-4]}"`:""}>${esc(h)}</th>`).join("")+"<th></th>";
+}
+
+function render(){
+  applyStatic(); if(typeof paintSync==="function"&&syncText) paintSync();
+  document.getElementById("wk").value=state.wk;
+  document.getElementById("bench").value=state.bench;
+  const M=model();
+  if(selSeg==null||selSeg>=M.segs.length) selSeg=M.peak?M.segs.indexOf(M.peak):0;
+  renderSummary(M); renderRoles(); renderGantt(M.ok,M.segs[selSeg]);
+  renderSegs(M.segs,M.peak); renderPies(M.segs[selSeg]); renderAdvice(M.advice); renderTable(M.rows); save();
+}
+
+function renderSummary({rows,ok,segs,peak}){
+  const t=D(TODAY), now=segs.find(s=>s.a<=t&&s.b>=t);
+  const md=ok.reduce((a,r)=>a+r.mandays,0);
+  const last=ok.length?new Date(Math.max(...ok.map(r=>r.e))):null;
+  const bench=+state.bench;
+  document.getElementById("summary").innerHTML=`
+    <div class="stat"><div class="k">${L.nowOnSite}</div><div class="v">${now?now.total:0}</div><div class="s">${now?L.nActive(now.act.length):L.noneToday}</div></div>
+    <div class="stat"><div class="k">${L.peakTotal}</div><div class="v hot">${peak?peak.total:0}</div><div class="s">${peak?fmt(peak.a)+" – "+fmt(peak.b):"—"}</div></div>
+    <div class="stat"><div class="k">${bench?L.peakGap:L.peakField}</div><div class="v ${bench&&peak&&peak.total>bench?"hot":""}">${bench&&peak?Math.max(0,peak.total-bench):(peak?peak.field:0)}</div><div class="s">${bench?L.benchHave(bench):L.fieldDesc}</div></div>
+    <div class="stat"><div class="k">${L.totalMD}</div><div class="v">${Math.round(md).toLocaleString()}</div><div class="s">${L.nRows(rows.length)}</div></div>
+    <div class="stat"><div class="k">${L.allDone}</div><div class="v">${fmt(last)}</div><div class="s">${last?L.daysAway(dayDiff(t,last)):""}</div></div>`;
+}
+
+function renderRoles(){
+  document.getElementById("roles").innerHTML=ROLES.map(r=>`<div class="role"><div class="t"><span class="dot" style="background:var(${r.c})"></span>${esc(roleName(r.k))}${L.showTag?`<span class="tag">${r.en}</span>`:""}</div>
+    <div class="d">${esc(L.roles[r.k][1])}</div>
+    ${r.field?`<div class="rule"><span class="hint">${L.perJob}</span></div>`:`<div class="rule">${L.rulePre} <input id="ratio-${r.k}" type="number" min="1" data-r="${r.k}" value="${state.ratio[r.k]}" aria-label="${esc(roleName(r.k))}"> ${L[r.unit]}</div>`}</div>`).join("");
+}
+document.getElementById("roles").addEventListener("change",e=>{const k=e.target.dataset.r;if(k){state.ratio[k]=+e.target.value||ROLES.find(x=>x.k===k).def;render()}});
+
+function renderGantt(ok,seg){
+  const g=document.getElementById("gantt");
+  if(!ok.length){g.innerHTML=`<p class="hint">${L.ganttEmpty}</p>`;return}
+  let a=new Date(Math.min(...ok.map(r=>r.s),D(TODAY))),b=new Date(Math.max(...ok.map(r=>r.e)));
+  a=new Date(a.getFullYear(),a.getMonth(),1); b=new Date(b.getFullYear(),b.getMonth()+1,1);
+  const span=dayDiff(a,b), pct=d=>dayDiff(a,d)/span*100, [LF,LJ,LA]=L.letters;
+  let ticks="",lines="";
+  for(let m=new Date(a);m<b;m=new Date(m.getFullYear(),m.getMonth()+1,1)){
+    ticks+=`<div class="tick" style="left:${pct(m)}%">${m.getMonth()===0||+m===+a?m.getFullYear()+" ":""}${L.months[m.getMonth()]}</div>`;
+    lines+=`<div class="tick" style="left:${pct(m)}%"></div>`;
+  }
+  const band=seg?`<div class="g-band" style="left:${pct(seg.a)}%;width:${pct(addDays(seg.b,1))-pct(seg.a)}%"></div>`:"";
+  let h=`<div class="g-row axis"><div></div><div class="g-track">${ticks}</div></div>`;
+  ok.forEach(r=>{
+    const l=pct(r.s),w=Math.max(pct(addDays(r.e,1))-l,.6),own=100-(+r.sub||0);
+    h+=`<div class="g-row"><div class="g-name"><b>${esc(r.proj)}</b>${r.scope?" · "+esc(r.scope):""}<span>${fmt(r.s)} → ${fmt(r.e)}</span></div>
+      <div class="g-track">${lines}${band}<div class="g-bar${r.sub>0?" split":""}${r.calc?" calc":""}" style="left:${l}%;width:${w}%;--own:${own}%" title="${esc(nm(r))}: ${roleName("fm")} ${r.fm}, ${roleName("jm")} ${r.jm}, ${roleName("ap")} ${r.ap}">${r.fm}${LF} ${r.jm}${LJ} ${r.ap}${LA} · ${r.work}${L.dU}${r.sub>0?" · "+esc(r.subName||L.subDef)+" "+r.sub+"%":""}</div></div></div>`;
+  });
+  h+=`<div class="g-today" style="left:calc(200px + (100% - 200px) * ${pct(D(TODAY))/100})"><span>${L.today}</span></div>`;
+  g.innerHTML=h;
+}
+
+function renderSegs(segs,peak){
+  document.getElementById("segs").innerHTML=segs.map((s,i)=>`<button class="seg" data-seg="${i}" aria-pressed="${i===selSeg}">
+    <div class="when">${fmt(s.a)} – ${fmt(s.b)}<small>${L.segDays(dayDiff(s.a,s.b)+1)} · ${s.act.length>1?L.overlapN(s.act.length):L.single}</small></div>
+    <div class="jobs">${s.act.map(r=>`<span>${esc(nm(r))}</span>`).join("")}</div>
+    <div class="n ${s===peak?"peak":""}">${s.total}<small>${L.ppl}</small></div></button>`).join("")||`<p class="hint" style="padding:10px">${L.noSeg}</p>`;
+}
+document.getElementById("segs").addEventListener("click",e=>{const b=e.target.closest("[data-seg]");if(b){selSeg=+b.dataset.seg;render()}});
+
+function pieSVG(parts){
+  const tot=parts.reduce((a,p)=>a+p.v,0); if(!tot) return "";
+  const R=80,r=48,cx=90,cy=90; let ang=-Math.PI/2,s=`<svg viewBox="0 0 180 180" role="img">`;
+  const nz=parts.filter(p=>p.v>0);
+  if(nz.length===1) s+=`<circle cx="${cx}" cy="${cy}" r="${(R+r)/2}" fill="none" stroke="${nz[0].c}" stroke-width="${R-r}"/>`;
+  else nz.forEach(p=>{const a2=ang+p.v/tot*Math.PI*2,lg=a2-ang>Math.PI?1:0;
+    const P=(rad,a)=>`${(cx+rad*Math.cos(a)).toFixed(2)} ${(cy+rad*Math.sin(a)).toFixed(2)}`;
+    s+=`<path d="M${P(R,ang)} A${R} ${R} 0 ${lg} 1 ${P(R,a2)} L${P(r,a2)} A${r} ${r} 0 ${lg} 0 ${P(r,ang)}Z" fill="${p.c}" stroke="${cv("--panel")}" stroke-width="1.5"><title>${esc(p.n)}: ${p.v}</title></path>`;ang=a2});
+  return s+`<text x="90" y="88" text-anchor="middle" font-size="26" font-family="IBM Plex Mono,monospace" fill="${cv("--ink")}">${tot}</text><text x="90" y="106" text-anchor="middle" font-size="11" fill="${cv("--muted")}">${L.ppl}</text></svg>`;
+}
+const PROJ_C=["--r-fm","--r-sf","--r-en","--r-jm","--r-lg","--r-ap","--accent","--bar"];
+function renderPies(seg){
+  const T=document.getElementById("segTitle"),P=document.getElementById("pies");
+  if(!seg){T.innerHTML="";P.innerHTML="";return}
+  const bench=+state.bench;
+  T.innerHTML=`<h2>${fmt(seg.a)} – ${fmt(seg.b)}</h2><div class="hint">${esc(seg.act.map(nm).join(L.sep))}</div>${bench&&seg.total>bench?`<div class="short" style="margin-top:6px">${L.shortage(seg.total,seg.total-bench)}</div>`:""}`;
+  const roleParts=ROLES.map(r=>({n:roleName(r.k)+(L.showTag?" "+r.en:""),v:seg[r.k],c:cv(r.c)}));
+  const projParts=seg.act.map((r,i)=>({n:nm(r),v:r.crew,c:cv(PROJ_C[i%PROJ_C.length])}));
+  projParts.push({n:L.shared,v:seg.sf+seg.en+seg.lg,c:cv("--sub")});
+  const list=ps=>`<ul>${ps.filter(p=>p.v>0).map(p=>`<li><span class="dot" style="background:${p.c}"></span>${esc(p.n)}<b>${p.v}</b></li>`).join("")}</ul>`;
+  P.innerHTML=`<div class="pie"><h3>${L.byRole}</h3>${pieSVG(roleParts)}${list(roleParts)}</div><div class="pie"><h3>${L.byJob}</h3>${pieSVG(projParts)}${list(projParts)}</div>`;
+}
+
+function buildAdvice(ok,segs,peak){
+  const items=[];
+  ok.forEach(A=>ok.forEach(B=>{
+    if(A===B) return; const gap=dayDiff(A.e,B.s);
+    if(gap>=-3&&gap<=14&&B.s>A.s){
+      const n=Math.min(A.crew,B.crew);
+      items.push({k:"move",t:L.aMove(esc(nm(A)),fmt(A.e),n,esc(nm(B)),fmt(B.s),gap>0?L.gapIdle(gap):gap<0?L.gapEarly(-gap):"",B.crew>n?L.extra(B.crew-n):""),d:A.e});
+    }
+  }));
+  const byProj={}; ok.forEach(r=>{(byProj[r.proj]=byProj[r.proj]||[]).push(r)});
+  Object.values(byProj).forEach(arr=>{
+    for(let i=0;i<arr.length;i++)for(let j=i+1;j<arr.length;j++){const a=arr[i],b=arr[j];
+      if(a.s<=b.e&&b.s<=a.e) items.push({k:"share",t:L.aSame(esc(a.proj),esc(a.scope||"—"),esc(b.scope||"—")),d:a.s<b.s?b.s:a.s})}
+  });
+  if(peak&&peak.act.length>1){
+    const longest=peak.act.reduce((m,r)=>r.e>m.e?r:m);
+    items.push({k:"peak",t:L.aPeak(fmt(peak.a),fmt(peak.b),peak.act.length,peak.total,peak.field,peak.sf,peak.en,peak.lg,esc(nm(longest))),d:peak.a});
+  }
+  ok.filter(r=>r.work>100).forEach(r=>items.push({k:"share",t:L.aBuffer(esc(nm(r)),r.work,r.sub?esc(r.subName||L.subDef):"",r.sub),d:r.s}));
+  ok.forEach(r=>{if((+r.ap||0)>(+r.jm||0))items.push({k:"ratio",t:L.aAp(esc(nm(r)),r.ap,r.jm),d:r.s});
+    if(!(+r.fm)) items.push({k:"ratio",t:L.aNoFm(esc(nm(r))),d:r.s})});
+  for(let i=0;i<segs.length-1;i++){const g=dayDiff(segs[i].b,segs[i+1].a)-1; if(g>3) items.push({k:"share",t:L.aIdle(fmt(addDays(segs[i].b,1)),g),d:segs[i].b})}
+  return items.sort((a,b)=>a.d-b.d);
+}
+function renderAdvice(items){
+  document.getElementById("advice").innerHTML=items.map(x=>`<li><span class="kind ${x.k}">${L.kinds[x.k]}</span><span>${x.t}</span></li>`).join("")||`<li><span></span><span class="hint">${L.advNone}</span></li>`;
+}
+
+function renderTable(rows){
+  const num=(i,k,r,lbl)=>`<td><input id="${k}${i}" type="number" min="0" data-i="${i}" data-k="${k}" value="${r[k]??""}" aria-label="${esc(lbl)}"></td>`;
+  document.getElementById("rows").innerHTML=rows.map((r,i)=>`<tr>
+    <td><input id="p${i}" data-i="${i}" data-k="proj" value="${esc(r.proj)}" aria-label="${esc(L.th[0])}"></td>
+    <td><input id="sc${i}" data-i="${i}" data-k="scope" value="${esc(r.scope)}" aria-label="${esc(L.th[1])}" style="width:90px"></td>
+    <td><input id="s${i}" type="date" data-i="${i}" data-k="start" value="${r.start}" aria-label="${esc(L.th[2])}"></td>
+    <td><input id="e${i}" type="date" data-i="${i}" data-k="end" value="${r.end}" aria-label="${esc(L.th[3])}">${r.calc?`<div class="hint">${L.calc} ${fmt(r.e)}</div>`:""}</td>
+    ${num(i,"fm",r,L.th[4])}${num(i,"jm",r,L.th[5])}${num(i,"ap",r,L.th[6])}
+    <td class="num">${r.crew}</td>
+    <td><input id="md${i}" type="number" min="0" data-i="${i}" data-k="md" value="${r.md}" placeholder="${r.mandays??""}" aria-label="${esc(L.th[8])}" style="width:70px"></td>
+    <td><input id="sb${i}" type="number" min="0" max="100" data-i="${i}" data-k="sub" value="${r.sub||""}" placeholder="0" aria-label="${esc(L.th[9])}"></td>
+    <td><input id="sn${i}" data-i="${i}" data-k="subName" value="${esc(r.subName)}" style="width:80px" aria-label="${esc(L.th[10])}"></td>
+    <td class="num">${r.work??"—"}</td>
+    <td>${r.status?`<span class="pill ${r.status==="run"?"run":""}">${L.st[r.status]}${r.left?" · "+L.left(r.left):""}</span>`:""}</td>
+    <td class="flag">${[...r.flags,noteOf(r)].filter(Boolean).map(esc).join("; ")}</td>
+    <td><button class="del" data-del="${i}" aria-label="${L.del}">✕</button></td></tr>`).join("");
+}
+
+/* ---------- Excel export ---------- */
+const serial=d=>(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())-Date.UTC(1899,11,30))/864e5;
+function sheet(rows,widths){
+  const ws={}; let maxC=0;
+  rows.forEach((row,R)=>{row.forEach((v,C)=>{
+    if(v===null||v===undefined||v==="") return;
+    const ref=XLSX.utils.encode_cell({r:R,c:C}); maxC=Math.max(maxC,C);
+    if(v instanceof Date) ws[ref]={t:"n",v:serial(v),z:"mm/dd/yyyy"};
+    else if(typeof v==="object") ws[ref]=v;
+    else if(typeof v==="number") ws[ref]={t:"n",v};
+    else ws[ref]={t:"s",v:String(v)};
+  })});
+  ws["!ref"]=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(rows.length-1,0),c:maxC}});
+  ws["!cols"]=widths.map(w=>({wch:w}));
+  if(rows.length>1) ws["!autofilter"]={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:rows.length-1,c:maxC}})};
+  return ws;
+}
+const strip=h=>h.replace(/<[^>]+>/g,"").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"');
+function buildWorkbook(){
+  const M=model(), wb=XLSX.utils.book_new(), wk=+state.wk;
+  const jobs=[L.xJobs,...M.rows.map(r=>[r.proj,r.scope,r.ok||r.start?r.s:"",r.e||"",+r.fm||0,+r.jm||0,+r.ap||0,r.crew,r.cal??"",r.work??"",r.mandays??"",+r.sub||"",r.subName,r.status?L.st[r.status]:"",[...r.flags,noteOf(r)].filter(Boolean).join("; ")])];
+  XLSX.utils.book_append_sheet(wb,sheet(jobs,[14,12,12,12,9,11,11,8,11,10,11,8,14,12,40]),L.sh.jobs);
+  const ov=[L.xOv,...M.segs.map(s=>[s.a,s.b,dayDiff(s.a,s.b)+1,s.act.map(nm).join(", "),s.fm,s.jm,s.ap,s.sf,s.en,s.lg,s.total])];
+  XLSX.utils.book_append_sheet(wb,sheet(ov,[12,12,7,50,9,11,11,9,9,9,8]),L.sh.ov);
+  const log=[L.xLog]; const weeks=[];
+  M.ok.forEach(r=>{let w=addDays(r.s,-((r.s.getDay()+6)%7));
+    for(;w<=r.e;w=addDays(w,7)){let any=false;for(let d=new Date(Math.max(w,r.s));d<=addDays(w,6)&&d<=r.e;d=addDays(d,1))if(isWork(d,wk)){any=true;break}
+      if(any) weeks.push({w:new Date(w),r})}});
+  weeks.sort((a,b)=>a.w-b.w||nm(a.r).localeCompare(nm(b.r)));
+  weeks.forEach((x,i)=>{const R=i+2;
+    log.push([x.w,nm(x.r),+x.r.fm||0,+x.r.jm||0,+x.r.ap||0,{t:"n",f:`SUM(C${R}:E${R})`,v:x.r.crew},"","","",{t:"n",f:`IF(COUNT(G${R}:I${R})=0,"",SUM(G${R}:I${R}))`},{t:"n",f:`IF(J${R}="","",J${R}-F${R})`},""])});
+  XLSX.utils.book_append_sheet(wb,sheet(log,[13,22,10,12,12,10,11,13,13,11,9,30]),L.sh.log);
+  const adv=[L.xAdv,...M.advice.map(a=>[L.kinds[a.k],strip(a.t)])];
+  XLSX.utils.book_append_sheet(wb,sheet(adv,[14,120]),L.sh.adv);
+  const set=[L.xSet,...L.xSetRows(L["wk"+state.wk],+state.ratio.sf,+state.ratio.en,+state.ratio.lg,state.bench===""?"":+state.bench,D(TODAY))];
+  XLSX.utils.book_append_sheet(wb,sheet(set,[36,14]),L.sh.set);
+  return XLSX.write(wb,{bookType:"xlsx",type:"array"});
+}
+const toast=m=>{document.getElementById("toast").textContent=m};
+const STANDALONE=true;
+document.getElementById("xlsx").hidden=!window.XLSX;
+document.getElementById("xlsx").addEventListener("click",async e=>{
+  const btn=e.currentTarget; btn.disabled=true; toast(L.xSaving);
+  try{
+    const data=buildWorkbook(), filename=`${L.file}_${TODAY}.xlsx`;
+    if(STANDALONE){const u=URL.createObjectURL(new Blob([data],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));const a=document.createElement("a");a.href=u;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),2000)}
+    toast(L.xSaved);
+  }catch(err){
+    const c=err&&err.code; toast(c==="declined"?L.xDeclined:c==="rate_limited"?L.xBusy:L.xFail);
+    if(c==="unavailable"||c==="not_granted"||c==="capability_disabled"||c==="capability_removed") btn.hidden=true;
+  }finally{btn.disabled=false}
+});
+
+/* ---------- shared data (Firebase) ---------- */
+const syncEl=document.getElementById("sync"),syncText=document.getElementById("syncText"),btnIn=document.getElementById("signin"),btnOut=document.getElementById("signout");
+let syncMsg=()=>L.syncLocal, syncState="local";
+function setSync(s,fn){syncState=s;syncMsg=fn;paintSync()}
+function paintSync(){syncEl.dataset.s=syncState;syncText.textContent=syncMsg();btnIn.textContent=L.signIn;btnOut.textContent=L.signOut}
+const CFG=window.FIREBASE_CONFIG;
+if(window.firebase&&CFG&&CFG.apiKey&&!/PASTE|填/.test(CFG.apiKey)){
+  firebase.initializeApp(CFG);
+  const auth=firebase.auth(), fs=firebase.firestore(), ref=fs.collection("schedules").doc(window.SCHEDULE_ID||"main");
+  let unsub=null,timer=null,applying=false,lastJSON="",deferred=null;
+  const shared=()=>({wk:state.wk,bench:state.bench,ratio:state.ratio,rows:state.rows});
+  const stamp=d=>{if(!d||!d.updatedAt)return "—";const t=d.updatedAt.toDate();return fmt(t)+" "+pad(t.getHours())+":"+pad(t.getMinutes())};
+  const fail=(e,user)=>{if(e&&e.code==="permission-denied") setSync("err",()=>L.syncDenied(user.email)); else setSync("err",()=>L.syncErr)};
+  const apply=d=>{applying=true;Object.assign(state,{wk:d.data.wk,bench:d.data.bench,ratio:d.data.ratio,rows:d.data.rows});lastJSON=JSON.stringify(shared());selSeg=null;render();applying=false};
+  btnIn.onclick=()=>auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(e=>{if(e.code==="auth/popup-blocked"||e.code==="auth/operation-not-supported-in-this-environment")auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());else toast(e.message)});
+  btnOut.onclick=()=>auth.signOut();
+  document.addEventListener("focusout",()=>{if(deferred){const d=deferred;deferred=null;setTimeout(()=>{if(!document.activeElement||!document.activeElement.closest("#rows,#roles,header"))apply(d);else deferred=d},0)}});
+  auth.onAuthStateChanged(user=>{
+    if(unsub){unsub();unsub=null} remote=null;
+    btnIn.hidden=!!user; btnOut.hidden=!user;
+    if(!user){setSync("local",()=>L.syncLogin);return}
+    setSync("saving",()=>L.syncLoading);
+    unsub=ref.onSnapshot(snap=>{
+      if(!snap.exists){ref.set({data:shared(),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:user.displayName||user.email}).catch(e=>fail(e,user));return}
+      const d=snap.data(); if(!d||!d.data)return;
+      remote={push(){if(applying)return;const j=JSON.stringify(shared());if(j===lastJSON)return;clearTimeout(timer);setSync("saving",()=>L.syncSaving);
+        timer=setTimeout(()=>{lastJSON=j;ref.set({data:JSON.parse(j),updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:user.displayName||user.email}).catch(e=>fail(e,user))},700)}};
+      if(!snap.metadata.hasPendingWrites&&JSON.stringify(d.data)!==JSON.stringify(shared())){
+        const a=document.activeElement; if(a&&a.matches("input,select")&&a.closest("#rows,#roles,header")) deferred=d; else apply(d);
+      }
+      if(!snap.metadata.hasPendingWrites) setSync("ok",()=>L.syncOk(stamp(d),d.updatedBy));
+    },e=>fail(e,user));
+  });
+} else setSync("local",()=>L.syncLocal);
+
+/* ---------- events ---------- */
+document.getElementById("rows").addEventListener("change",e=>{
+  const t=e.target; if(!t.dataset.k) return;
+  const r=state.rows[+t.dataset.i]; r[t.dataset.k]=t.type==="number"?(t.value===""?"":+t.value):t.value;
+  if(t.dataset.k==="start"&&t.value&&r.noteKey==="noStart") delete r.noteKey;
+  selSeg=null; render();
+});
+document.getElementById("rows").addEventListener("click",e=>{const b=e.target.closest("[data-del]");if(b){state.rows.splice(+b.dataset.del,1);selSeg=null;render()}});
+document.getElementById("add").onclick=()=>{state.rows.push({proj:L.newJob,scope:"",start:TODAY,end:"",fm:1,jm:2,ap:1,md:"",sub:0,subName:"",note:""});selSeg=null;render()};
+document.getElementById("reset").onclick=()=>{state={...state,ratio:{sf:20,en:3,lg:25},rows:structuredClone(SAMPLE)};selSeg=null;render()};
+document.getElementById("wk").onchange=e=>{state.wk=+e.target.value;render()};
+document.getElementById("bench").onchange=e=>{state.bench=e.target.value===""?"":+e.target.value;render()};
+document.querySelector(".lang").addEventListener("click",e=>{const b=e.target.closest("[data-lang]");if(b){state.lang=b.dataset.lang;L=I18N[state.lang];toast("");render()}});
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change",render);
+new MutationObserver(render).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+render();
+</script>
+
+</body>
+</html>

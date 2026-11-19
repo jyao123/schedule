@@ -1,13 +1,11 @@
-// 共用資料設定 / Shared data settings
-// 1) 到 Firebase 建立專案後，把「firebaseConfig」裡的值貼到下面，取代引號裡的 PASTE_...。
-// 2) 存檔。網站重新整理後，右上角就會出現「用 Google 登入」。
+// 共用資料設定 / Shared data settings（Firebase 專案：acron-schedule）
 window.FIREBASE_CONFIG = {
-  apiKey: "PASTE_API_KEY",
-  authDomain: "PASTE_PROJECT_ID.firebaseapp.com",
-  projectId: "PASTE_PROJECT_ID",
-  storageBucket: "PASTE_PROJECT_ID.appspot.com",
-  messagingSenderId: "PASTE_SENDER_ID",
-  appId: "PASTE_APP_ID"
+  apiKey: "AIzaSyDvG1aRYUpFRJCxmfL_8781h_clhb1u8gc",
+  authDomain: "acron-schedule.firebaseapp.com",
+  projectId: "acron-schedule",
+  storageBucket: "acron-schedule.firebasestorage.app",
+  messagingSenderId: "370836411097",
+  appId: "1:370836411097:web:b462fa09d8f6eec16064c8"
 };
 // 同一個網站要分開管理多份排程時，可以改這個名稱。
 window.SCHEDULE_ID = "main";
